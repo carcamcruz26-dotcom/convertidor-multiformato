@@ -6,10 +6,12 @@ import ezdxf
 import numpy as np
 import streamlit as st
 from PIL import Image
-from rembg import remove
+from rembg import remove, new_session
 from shapely.geometry import Polygon
 
 st.set_page_config(page_title="Convertidor 300 DPI y Plotter", page_icon="📐", layout="centered")
+
+st.markdown('<meta name="google" content="notranslate">', unsafe_allow_html=True)
 
 st.title("📐 Convertidor Multiformato 300 DPI y Plotter")
 st.write("Convierte imágenes a **DXF, SVG, PNG, JPG, WEBP y PDF** calibrados exactamente a **300 DPI reales** para impresión y corte.")
@@ -17,16 +19,18 @@ st.write("Convierte imágenes a **DXF, SVG, PNG, JPG, WEBP y PDF** calibrados ex
 DPI_OBJETIVO = 300.0
 MM_POR_PULGADA = 25.4
 
+@st.cache_resource
+def cargar_modelo_ia():
+    return new_session("u2netp")
+
 def px_a_mm(pixeles):
     return (pixeles / DPI_OBJETIVO) * MM_POR_PULGADA
 
 def mm_a_px(milimetros):
     return int(round((milimetros / MM_POR_PULGADA) * DPI_OBJETIVO))
 
-# 1. Subida de archivo
 archivo_subido = st.file_uploader("Sube tu imagen", type=["png", "jpg", "jpeg", "webp", "bmp"])
 
-# 2. Selector de formato de destino
 formato_salida = st.selectbox(
     "Selecciona el formato de exportación (300 DPI):",
     [
@@ -39,7 +43,6 @@ formato_salida = st.selectbox(
     ]
 )
 
-# 3. Controles dinámicos calibrados en milímetros reales
 col1, col2 = st.columns(2)
 with col1:
     quitar_fondo = st.checkbox("Quitar fondo automáticamente con IA", value=True)
@@ -103,19 +106,18 @@ if archivo_subido is not None:
                 input_bytes = archivo_subido.getvalue()
                 nombre_base = os.path.splitext(archivo_subido.name)[0]
 
-                # Paso 1: Quitar fondo si está activado
                 if quitar_fondo:
-                    sin_fondo_bytes = remove(input_bytes)
+                    sesion = cargar_modelo_ia()
+                    sin_fondo_bytes = remove(input_bytes, session=sesion)
                     img_procesada = Image.open(io.BytesIO(sin_fondo_bytes)).convert("RGBA")
                 else:
                     img_procesada = imagen_original.convert("RGBA")
 
-                # Paso 2: Exportar según formato con escala real a 300 DPI
                 if "DXF" in formato_salida:
                     _, contornos, _, nuevo_alto = obtener_contornos(img_procesada, modo_corte, margen_mm)
                     doc = ezdxf.new("R2000")
-                    doc.header["$INSUNITS"] = 4  # Unidades en Milímetros
-                    doc.header["$MEASUREMENT"] = 1  # Sistema Métrico
+                    doc.header["$INSUNITS"] = 4
+                    doc.header["$MEASUREMENT"] = 1
                     msp = doc.modelspace()
 
                     trazos = 0
@@ -131,7 +133,6 @@ if archivo_subido is not None:
                         poli_suave = poli.simplify(suavizado, preserve_topology=True)
                         if poli_suave.geom_type == "Polygon":
                             coords = list(poli_suave.exterior.coords)
-                            # Convertir cada coordenada de píxeles a milímetros exactos (300 DPI)
                             pts_dxf_mm = [(px_a_mm(x), px_a_mm(nuevo_alto - y)) for x, y in coords]
                             msp.add_lwpolyline(pts_dxf_mm, close=True, dxfattribs={"color": 1})
                             trazos += 1
